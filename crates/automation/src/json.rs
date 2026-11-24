@@ -281,6 +281,24 @@ pub(crate) fn summary(d: &Document) -> Value {
 
 /// What `doc_info` returns for an open document: its metadata, security, pages, bookmarks,
 /// comments, fields, links, layers, transitions, attachments, fonts, warnings and repairs.
+/// `doc_facts`: the first facts about a document, without doc_info's lists.
+pub(crate) fn facts(d: &Document) -> Value {
+    let i = &d.info;
+    json!({
+        "pages": i.pages.len(),
+        "pdf_version": i.pdf_version,
+        "file_size": i.file_size,
+        "title": i.title,
+        "tagged": i.tagged,
+        "has_javascript": i.has_javascript,
+        "protected": d.security_summary().is_some(),
+        "fields": i.fields.len(),
+        "annotations": i.annotations.len(),
+        "links": i.links.len(),
+        "layers": i.layers.len(),
+    })
+}
+
 pub(crate) fn info(d: &Document) -> Value {
     let i = &d.info;
     let page1 = |p: usize| p + 1;

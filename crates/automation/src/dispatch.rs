@@ -62,6 +62,7 @@ impl Automation {
                 self.session.refresh_fonts(id);
                 info(self.doc(&a)?)
             }
+            "doc_facts" => crate::json::facts(self.doc(&a)?),
             "doc_close" => self.doc_close(&a)?,
             "doc_save" => self.doc_save(&a)?,
             "doc_rename" => self.doc_rename(&a)?,

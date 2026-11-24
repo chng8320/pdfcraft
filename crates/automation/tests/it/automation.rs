@@ -14854,3 +14854,19 @@ fn grouped_existing_thai_body_edits_saves_reopens_and_undo_restores_original_gly
     assert_eq!(page_text(&mut a, reopened), [new, old]);
     assert_eq!(ok(&mut a, "content_list", json!({"doc":reopened}))["count"], 0, "editing existing text must not create Add Text objects");
 }
+
+#[test]
+fn doc_facts_gives_the_first_facts_without_the_lists() {
+    let dir = workdir("doc-facts");
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "a.pdf" }))["doc"].as_u64().unwrap();
+    let f = ok(&mut a, "doc_facts", json!({ "doc": doc }));
+    assert_eq!(f["pages"], 3, "{f}");
+    assert_eq!(f["protected"], false, "{f}");
+    for key in ["pdf_version", "file_size", "tagged", "fields", "annotations", "links", "layers"] {
+        assert!(f.get(key).is_some(), "{key} missing: {f}");
+    }
+    assert!(f.get("outline").is_none() && f.get("pages").unwrap().is_u64(), "lists stay in doc_info: {f}");
+    let def = tools().into_iter().find(|t| t.name == "doc_facts").unwrap();
+    assert!(def.read_only);
+}
