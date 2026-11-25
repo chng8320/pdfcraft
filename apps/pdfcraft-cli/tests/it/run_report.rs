@@ -69,3 +69,16 @@ fn the_flag_needs_a_script() {
     assert_eq!(o.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&o.stderr).contains("--report needs --script"));
 }
+
+#[test]
+fn keep_going_runs_every_step_and_still_fails_the_run() {
+    let steps = serde_json::json!([blank(), { "tool": "page_rotate", "args": { "doc": 1, "pages": [999], "degrees": 90 } }, { "tool": "doc_info", "args": { "doc": 1 } }]);
+    let o = run_script("report-keep-going", &steps, &["--report", "--keep-going"]);
+    assert_eq!(o.status.code(), Some(1), "a failed step still fails the run");
+    let report: serde_json::Value = serde_json::from_slice(&o.stdout).expect("stdout is one JSON document");
+    let statuses: Vec<_> = report["steps"].as_array().unwrap().iter().map(|s| s["status"].as_str().unwrap().to_owned()).collect();
+    assert_eq!(statuses, ["ok", "error", "ok"], "{report}");
+    assert_eq!(report["ok"], false);
+    let refused = run_script("keep-going-alone", &steps, &["--keep-going"]);
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("--keep-going needs"), "{}", String::from_utf8_lossy(&refused.stderr));
+}

@@ -87,8 +87,9 @@ pdfcraft-cli batch <files or dirs...> --steps convert,ocr,optimize --out-dir DIR
                       [--ppi 150] [--quality 60] [--dpi 300] [--language en] [--ocr-all-pages]
 pdfcraft-cli tools                                       automation tools and their JSON Schemas
 pdfcraft-cli run    <tool> [key=value …] [--root DIR] [--out image.png]
-pdfcraft-cli run    --script steps.json [--root DIR] [--report]
-                      [{\"tool\": \"doc_open\", \"args\": {…}}, …]; --report prints one JSON document for the run
+pdfcraft-cli run    --script steps.json [--root DIR] [--report [--keep-going]]
+                      [{\"tool\": \"doc_open\", \"args\": {…}}, …]; --report prints one JSON document for the run,
+                      --keep-going runs every step even after one fails
 ",
     mcp_usage!(),
     "\

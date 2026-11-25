@@ -117,6 +117,7 @@ pub(crate) const RUN_OPTIONS: &[OptionSpec] = &[
     OptionSpec { name: "--script", takes_value: true },
     OptionSpec { name: "--out", takes_value: true },
     OptionSpec { name: "--report", takes_value: false },
+    OptionSpec { name: "--keep-going", takes_value: false },
 ];
 
 pub(crate) const UI_OPTIONS: &[OptionSpec] = &[

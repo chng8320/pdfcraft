@@ -76,14 +76,16 @@ fn output_values(
 
 /// Run a script and print one JSON document: per step its number, tool and `ok`/`error`/`skipped`
 /// with the result or the message. The first failing step ends the run, as without `--report`;
-/// the steps after it are listed as skipped and the exit status is the same.
-fn run_script_report(auto: &mut pdfcraft_automation::Automation, steps: &[serde_json::Value]) -> Result<(), CliError> {
+/// the steps after it are listed as skipped and the exit status is the same. With `keep_going`
+/// (`--keep-going`) every step runs, each failure is reported in its place, and the exit status
+/// still says one failed.
+fn run_script_report(auto: &mut pdfcraft_automation::Automation, steps: &[serde_json::Value], keep_going: bool) -> Result<(), CliError> {
     let mut report = Vec::with_capacity(steps.len());
     let mut failure: Option<String> = None;
     for (i, step) in steps.iter().enumerate() {
         let n = i + 1;
         let tool = step["tool"].as_str();
-        if failure.is_some() {
+        if failure.is_some() && !keep_going {
             report.push(serde_json::json!({ "step": n, "tool": tool, "status": "skipped" }));
             continue;
         }
@@ -98,8 +100,8 @@ fn run_script_report(auto: &mut pdfcraft_automation::Automation, steps: &[serde_
         match outcome {
             Ok(result) => report.push(serde_json::json!({ "step": n, "tool": tool, "status": "ok", "result": result })),
             Err(message) => {
-                report.push(serde_json::json!({ "step": n, "tool": tool, "status": "error", "error": message }));
-                failure = Some(message);
+                report.push(serde_json::json!({ "step": n, "tool": tool, "status": "error", "error": message.clone() }));
+                failure.get_or_insert(message);
             }
         }
     }
@@ -111,15 +113,19 @@ fn run_script_report(auto: &mut pdfcraft_automation::Automation, steps: &[serde_
 pub(crate) fn run(args: &[String]) -> Result<(), CliError> {
     validate_options("run", args, RUN_OPTIONS)?;
     let report = args.iter().any(|a| a == "--report");
+    let keep_going = args.iter().any(|a| a == "--keep-going");
     if report && flag(args, "--script").is_none() {
         return Err("run: --report needs --script".to_string().into());
+    }
+    if keep_going && !report {
+        return Err("run: --keep-going needs --script and --report".to_string().into());
     }
     let mut auto = automation(args)?;
     if let Some(script) = flag(args, "--script") {
         let text = std::fs::read_to_string(script).map_err(|e| format!("{script}: {e}"))?;
         let steps: Vec<serde_json::Value> = serde_json::from_str(&text).map_err(|e| format!("{script}: {e}"))?;
         if report {
-            return run_script_report(&mut auto, &steps);
+            return run_script_report(&mut auto, &steps, keep_going);
         }
         for (i, step) in steps.iter().enumerate() {
             let tool = step["tool"].as_str().ok_or(format!("step {}: missing \"tool\"", i + 1))?;
