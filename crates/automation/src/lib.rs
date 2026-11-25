@@ -28,6 +28,7 @@ mod links;
 #[cfg(feature = "mcp")]
 pub mod mcp;
 mod measure;
+mod net;
 mod model3d;
 mod model_render;
 mod print_colour;

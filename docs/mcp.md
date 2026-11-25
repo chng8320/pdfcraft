@@ -73,15 +73,20 @@ config works across the suite) keep the agent to the folders you give it:
   `page_replace`, `doc_combine` and `doc_create_multiple` inputs, `doc_create` images, stamp,
   picture, attachment, signature and form-image files, `doc_watermark` and `doc_background` files,
   `doc_import_data`, `form_merge_data`, the files `action_run` and `ocr_recognize_files` process,
-  digital ID, graphic and certificate files for signing and `sign_trust`, `text_font_import`, and
+  digital ID, graphic and certificate files for signing and `sign_trust`, the certificate, OCSP
+  and CRL files `sign_add_ltv` adds, `text_font_import`, and
   the folders `text_font_files` searches. Without `directories`, `text_font_files` searches the read
   root instead of the installed fonts.
 - Every file a tool writes must lie inside the **write root**: `doc_save` (also saving in place),
   `page_extract`, `doc_combine`, `doc_create_multiple`, `doc_split`, `doc_reduce`, `doc_optimize`,
   `doc_print` to a file, the `doc_export_*` tools, `image_save`, `measure_export`,
   `comments_summarize`, the accessibility report and review record, `doc_compare_report`,
-  `form_merge_data`, the output folders of `action_run` and `ocr_recognize_files`, `sign_id_create`
-  and `sign_document`.
+  `form_merge_data`, the output folders of `action_run` and `ocr_recognize_files`, `sign_id_create`,
+  `sign_document`, `sign_timestamp` and `sign_add_ltv`.
+- Three signing tools reach the network, and only when asked: `sign_document` with `timestamp_url`
+  and `sign_timestamp` POST to the time-stamp authority given, and `sign_add_ltv` with `fetch: true`
+  asks the OCSP responders and CRL addresses named in the signatures' certificates (http and https
+  only). The roots don't cover these addresses.
 - Read and write access are separate. Give the same folder twice for both. A root left out grants
   none of its access: with only `--automation-read-root`, nothing can be written to disk, though
   tools that give their result back instead of a path still do. Without either flag nothing changes.

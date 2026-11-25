@@ -3267,6 +3267,37 @@ fn signing_an_encrypted_form_through_tools() {
     assert_eq!((list["all_valid"].as_bool(), list["signatures"][0]["status"].as_str()), (Some(true), Some("valid")), "{list}");
 }
 
+/// Long-term validation data goes in as an incremental update that keeps the signature valid;
+/// the network tools refuse addresses that aren't http(s) before reaching out.
+#[test]
+fn long_term_validation_data_through_tools() {
+    let dir = workdir("sign-ltv");
+    let mut a = auto(&dir);
+    ok(&mut a, "sign_id_create", json!({ "name": "Ada Lovelace", "key": "p256", "password": "secret12", "path": "ada.p12" }));
+    let doc = ok(&mut a, "doc_open", json!({ "path": "a.pdf" }))["doc"].as_u64().unwrap();
+    for (tool, args) in [
+        ("sign_document", json!({ "doc": doc, "id": "ada.p12", "password": "secret12", "out": "x.pdf", "timestamp_url": "file:///etc/passwd" })),
+        ("sign_timestamp", json!({ "doc": doc, "url": "ftp://example.com/tsa", "out": "x.pdf" })),
+        ("sign_add_ltv", json!({ "doc": doc, "out": "x.pdf" })),
+    ] {
+        assert!(matches!(a.call(tool, &args), Err(ToolError::InvalidArgs(_))), "{tool} {args}");
+    }
+    assert!(!dir.join("x.pdf").exists());
+    ok(&mut a, "sign_document", json!({ "doc": doc, "id": "ada.p12", "password": "secret12", "out": "signed.pdf" }));
+    let r = ok(&mut a, "sign_add_ltv", json!({ "doc": doc, "out": "ltv.pdf" }));
+    assert_eq!((r["signatures"].as_u64(), r["certificates"].as_array().map(Vec::len)), (Some(1), Some(1)), "{r}");
+    assert_eq!(r["fetched"], json!([]), "nothing fetched without fetch: true");
+    let signed = std::fs::read(dir.join("signed.pdf")).unwrap();
+    let ltv = std::fs::read(dir.join("ltv.pdf")).unwrap();
+    assert!(ltv.len() > signed.len() && ltv.starts_with(&signed), "an incremental update");
+    let mut b = auto(&dir);
+    let re = ok(&mut b, "doc_open", json!({ "path": "ltv.pdf" }))["doc"].as_u64().unwrap();
+    ok(&mut b, "sign_trust", json!({ "paths": ["ada.p12"], "password": "secret12" }));
+    let list = ok(&mut b, "sign_list", json!({ "doc": re }));
+    assert_eq!(list["all_valid"].as_bool(), Some(true), "{list}");
+    assert!(matches!(b.call("sign_add_ltv", &json!({ "doc": re, "out": "y.pdf", "field": "Nope" })), Err(ToolError::InvalidArgs(_))));
+}
+
 #[test]
 fn combine_opens_protected_files_with_their_passwords() {
     let dir = workdir("combine-passwords");

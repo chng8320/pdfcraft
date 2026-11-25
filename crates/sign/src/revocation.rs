@@ -162,6 +162,27 @@ impl CertId {
     }
 }
 
+/// An unsigned DER `OCSPRequest` (RFC 6960 §4.1.1) asking about each `CertID`, ready to POST
+/// as `application/ocsp-request`. Building the request is here; sending it stays with the caller.
+pub fn encode_ocsp_request(ids: &[CertId]) -> Vec<u8> {
+    use crate::der;
+    let requests: Vec<Vec<u8>> = ids
+        .iter()
+        .map(|id| {
+            let cert_id = der::seq(&[
+                &id.hash_alg.algorithm(),
+                &der::octets(&id.issuer_name_hash),
+                &der::octets(&id.issuer_key_hash),
+                &der::tlv(der::tag::INTEGER, &id.serial),
+            ]);
+            der::seq(&[&cert_id])
+        })
+        .collect();
+    let refs: Vec<&[u8]> = requests.iter().map(Vec::as_slice).collect();
+    let tbs_request = der::seq(&[&der::seq(&refs)]);
+    der::seq(&[&tbs_request])
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum CertStatus {
     Good,
@@ -496,5 +517,21 @@ mod shared_crl_tests {
         }
         compare(&vec![0; MAX_EVIDENCE]);
         compare(&vec![0; MAX_EVIDENCE + 1]);
+    }
+
+    #[test]
+    fn an_ocsp_request_nests_one_request_per_cert_id() {
+        use crate::der::{Tlv, tag};
+        let id = |serial: u8| CertId { hash_alg: DigestAlg::Sha1, issuer_name_hash: vec![1; 20], issuer_key_hash: vec![2; 20], serial: vec![serial] };
+        let bytes = encode_ocsp_request(&[id(5), id(9)]);
+        let req = Tlv::parse_all(&bytes).unwrap().expect(tag::SEQUENCE, "OCSPRequest").unwrap();
+        let tbs = req.children().unwrap()[0];
+        let list = tbs.children().unwrap()[0];
+        let requests = list.children().unwrap();
+        assert_eq!(requests.len(), 2);
+        let cert_id = requests[1].children().unwrap()[0].children().unwrap();
+        assert_eq!(cert_id[1].value, &[1u8; 20][..]);
+        assert_eq!(cert_id[2].value, &[2u8; 20][..]);
+        assert_eq!(cert_id[3].value, &[9u8][..]);
     }
 }

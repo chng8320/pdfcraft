@@ -21,6 +21,9 @@ pdfcraft-prc-render = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.11"
 tempfile = "3.27"
+# The time-stamp authority and OCSP/CRL transport for signing (the sign crate never fetches);
+# the same client ArtCraft's font store and updater use.
+ureq = "3.5"
 base64 = { version = "0.23", optional = true }
 craft-jsonrpc = { workspace = true, optional = true }
 craft-mcp-server = { workspace = true, optional = true }

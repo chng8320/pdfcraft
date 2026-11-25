@@ -18,6 +18,15 @@ fn time(secs: i64) -> sign::Time {
     sign::Time::from_unix(secs)
 }
 
+/// `timeout`: seconds a network call may take (1–600, default 30).
+fn timeout_arg(a: &Args) -> Result<u64> {
+    match a.opt_int("timeout")? {
+        None => Ok(crate::net::DEFAULT_TIMEOUT),
+        Some(t) if (1..=600).contains(&t) => Ok(t as u64),
+        Some(_) => Err(bad("timeout must be 1 to 600 seconds")),
+    }
+}
+
 /// The longest label `sign_document` takes (characters): a label is a few words.
 const MAX_LABEL_CHARS: usize = 200;
 
@@ -259,6 +268,14 @@ impl Automation {
         let reason = a.opt_str("reason")?.map(str::to_string);
         let location = a.opt_str("location")?.map(str::to_string);
         let contact = a.opt_str("contact")?.map(str::to_string);
+        // PAdES B-T: a time-stamp authority countersigns the signature's time.
+        let tsa = match a.opt_str("timestamp_url")? {
+            Some(url) => {
+                crate::net::check_url(url).map_err(|e| bad(format!("timestamp_url: {e}")))?;
+                Some(crate::net::HttpTsa { url: url.trim().to_string(), timeout: timeout_arg(a)? })
+            }
+            None => None,
+        };
         let signing = field.clone();
         let scripted = signing.as_deref().is_some_and(|f| {
             self.session.sign_event_scripted(doc_id, f, SignEvent::Before) || self.session.sign_event_scripted(doc_id, f, SignEvent::After)
@@ -286,7 +303,11 @@ impl Automation {
         };
         let opts =
             SignOptions { field, page, rect, reason, location, contact, certify, appearance, appearance_labels, graphic, ..SignOptions::default() };
-        let signed = self.session.sign(doc_id, &id, opts).map_err(|e| match e {
+        let signed = match &tsa {
+            Some(tsa) => self.session.sign_with_timestamp(doc_id, &id, opts, tsa),
+            None => self.session.sign(doc_id, &id, opts),
+        };
+        let signed = signed.map_err(|e| match e {
             // A graphic the signer refuses is the caller's to fix.
             pdfcraft_engine::EditError::Sign(m) if m.starts_with("the signature graphic") => bad(m),
             e => failed(e),
@@ -339,6 +360,105 @@ impl Automation {
             result["form_scripts"] = json!({ "skipped": true, "why": "the field has signing scripts; pass run_form_scripts: true to run them" });
         }
         Ok(result)
+    }
+
+    /// `sign_timestamp`: append a document timestamp (`/ETSI.RFC3161`) from the time-stamp
+    /// authority at `url` and save to `out` — PAdES B-LTA when the file already carries its
+    /// validation data (sign_add_ltv), or a timestamp alone on an unsigned file.
+    pub(crate) fn sign_timestamp(&mut self, a: &Args) -> Result<Value> {
+        let doc = self.doc(a)?;
+        let doc_id = doc.id;
+        let url = a.str("url")?;
+        crate::net::check_url(url).map_err(|e| bad(format!("url: {e}")))?;
+        let tsa = crate::net::HttpTsa { url: url.trim().to_string(), timeout: timeout_arg(a)? };
+        let out = self.resolve(a.str("out")?, true)?;
+        let stamped = self.session.timestamp_document(doc_id, &tsa, String::new()).map_err(failed)?;
+        write_atomic(&out, &stamped)?;
+        let path = out.to_string_lossy().into_owned();
+        self.session.mark_signed(doc_id, stamped.clone(), Some(path.clone())).map_err(failed)?;
+        let doc = self.doc(a)?;
+        let newest = doc.signatures.iter().filter(|s| s.signed && s.doc_timestamp).max_by_key(|s| s.revision).cloned();
+        Ok(json!({ "path": path, "bytes": stamped.len(), "timestamp": newest.map(|s| self.sig_json(a, &s)).transpose()? }))
+    }
+
+    /// `sign_add_ltv`: add long-term validation data (a `/DSS` with certificates, OCSP responses
+    /// and CRLs, PAdES B-LT) for the document's signatures and save to `out`. The evidence is
+    /// what `certs`, `ocsps` and `crls` name, plus, with `fetch: true`, each certificate's OCSP
+    /// response (else CRL) fetched from the addresses in the certificate.
+    pub(crate) fn sign_add_ltv(&mut self, a: &Args) -> Result<Value> {
+        let doc = self.doc(a)?;
+        let doc_id = doc.id;
+        let only = a.opt_str("field")?.map(str::to_string);
+        let mut certs: Vec<Certificate> = Vec::new();
+        let mut known = std::collections::HashSet::new();
+        let mut add = |c: Certificate, certs: &mut Vec<Certificate>| {
+            if known.insert(c.raw.clone()) {
+                certs.push(c);
+            }
+        };
+        let mut covered = 0usize;
+        for s in doc.signatures.iter().filter(|s| s.signed && only.as_deref().is_none_or(|f| f == s.field)) {
+            covered += 1;
+            for c in s.certificate.iter().chain(s.chain.iter()) {
+                add(c.clone(), &mut certs);
+            }
+        }
+        if let Some(f) = &only
+            && covered == 0
+        {
+            return Err(bad(format!("no signed signature field is named {f:?}")));
+        }
+        let files = |key: &str| -> Result<Vec<String>> {
+            match a.get(key) {
+                None | Some(Value::Null) => Ok(Vec::new()),
+                Some(_) => Ok(a.strs(key)?.into_iter().map(str::to_string).collect()),
+            }
+        };
+        for p in files("certs")? {
+            let bytes = crate::read_input(&self.resolve(&p, false)?)?;
+            for c in sign::x509::load_certificates(&bytes).map_err(|e| bad(format!("certs {p}: {e}")))? {
+                add(c, &mut certs);
+            }
+        }
+        let mut ocsps = Vec::new();
+        for p in files("ocsps")? {
+            let bytes = crate::read_input(&self.resolve(&p, false)?)?;
+            sign::revocation::OcspResponse::parse(&bytes).map_err(|e| bad(format!("ocsps {p}: not an OCSP response: {e}")))?;
+            ocsps.push(bytes);
+        }
+        let mut crls = Vec::new();
+        for p in files("crls")? {
+            let bytes = crate::read_input(&self.resolve(&p, false)?)?;
+            sign::revocation::CertificateList::parse(&bytes).map_err(|e| bad(format!("crls {p}: not a CRL: {e}")))?;
+            crls.push(bytes);
+        }
+        if covered == 0 && certs.is_empty() {
+            return Err(bad("the document has no signatures and no certs were given: there is nothing to keep validation data for"));
+        }
+        let timeout = timeout_arg(a)?;
+        let out = self.resolve(a.str("out")?, true)?;
+        let fetched = if a.opt_bool("fetch")?.unwrap_or(false) {
+            crate::net::fetch_revocation(&certs, time(self.session.now_secs()), timeout)
+        } else {
+            crate::net::Fetched::default()
+        };
+        let (n_ocsp, n_crl) = (ocsps.len() + fetched.ocsps.len(), crls.len() + fetched.crls.len());
+        ocsps.extend(fetched.ocsps);
+        crls.extend(fetched.crls);
+        let evidence = sign::dss::Evidence { certs: certs.iter().map(|c| c.raw.clone()).collect(), ocsps, crls };
+        let saved = self.session.embed_ltv(doc_id, &evidence).map_err(failed)?;
+        write_atomic(&out, &saved)?;
+        let path = out.to_string_lossy().into_owned();
+        self.session.mark_signed(doc_id, saved.clone(), Some(path.clone())).map_err(failed)?;
+        Ok(json!({
+            "path": path,
+            "bytes": saved.len(),
+            "signatures": covered,
+            "certificates": certs.iter().map(cert_json).collect::<Vec<_>>(),
+            "ocsp_responses": n_ocsp,
+            "crls": n_crl,
+            "fetched": fetched.log,
+        }))
     }
 
     /// `{"image": path}` (PNG or JPEG), `{"text": name}` (typed in the script font) or

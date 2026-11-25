@@ -1025,7 +1025,7 @@ pub fn tools() -> Vec<ToolDef> {
             .ro()
             .cmd("sign.digital")
             .with(schema(json!({}), &[])),
-        t("sign_document", "Sign a document", "Sign with a digital ID (a .p12/.pfx path, or on macOS a Keychain identity: \"keychain:<common name or fingerprint>\" from sign_keychain_ids, or on Windows a store identity: \"windows:<common name or fingerprint>\" from sign_windows_ids) and save the signed file to `out` (signing always saves, as in Acrobat; the document then shows the signed file). Sign an existing empty signature field (`field`), or a new one on `page` at `rect` (omit rect for an invisible signature). certify: no_changes, form_fill or comments makes a certification signature. graphic shows a picture where the signer's name would be large (Acrobat: Configure Signature Appearance): {\"image\": path} (PNG or JPEG), {\"text\": name} (typed in the Fill & Sign script font) or {\"strokes\": [[[x, y], …], …]} (y up, the drawing pad 1 wide); it needs a visible signature. appearance chooses what a visible signature shows (default: name, date and labels; reason, location and distinguished_name are off unless turned on). labels gives the words of its labels, e.g. in another language (default English: \"Digitally signed by\", \"DN: \", \"Reason: \", \"Location: \", \"Date: \"; include the separator); each must be in Western European characters (Windows-1252), the only ones the signature's font draws, or the call is refused naming the label and character. PAdES B-B, SHA-256 (SHA-384 for P-384 keys). On a dynamic (XFA) form, run_form_scripts: true runs the field's own signing scripts: preSign just before signing, so what it changes is signed too (form_scripts.changed lists each field it changed, with the values before and after), and postSign after, left unsaved. Without it they don't run, and form_scripts.skipped says the field has them.")
+        t("sign_document", "Sign a document", "Sign with a digital ID (a .p12/.pfx path, or on macOS a Keychain identity: \"keychain:<common name or fingerprint>\" from sign_keychain_ids, or on Windows a store identity: \"windows:<common name or fingerprint>\" from sign_windows_ids) and save the signed file to `out` (signing always saves, as in Acrobat; the document then shows the signed file). Sign an existing empty signature field (`field`), or a new one on `page` at `rect` (omit rect for an invisible signature). certify: no_changes, form_fill or comments makes a certification signature. graphic shows a picture where the signer's name would be large (Acrobat: Configure Signature Appearance): {\"image\": path} (PNG or JPEG), {\"text\": name} (typed in the Fill & Sign script font) or {\"strokes\": [[[x, y], …], …]} (y up, the drawing pad 1 wide); it needs a visible signature. appearance chooses what a visible signature shows (default: name, date and labels; reason, location and distinguished_name are off unless turned on). labels gives the words of its labels, e.g. in another language (default English: \"Digitally signed by\", \"DN: \", \"Reason: \", \"Location: \", \"Date: \"; include the separator); each must be in Western European characters (Windows-1252), the only ones the signature's font draws, or the call is refused naming the label and character. PAdES B-B, SHA-256 (SHA-384 for P-384 keys); with timestamp_url, a time-stamp authority (RFC 3161, over HTTP) countersigns the signature's time: PAdES B-T. Then sign_add_ltv adds the validation data (B-LT) and sign_timestamp a document timestamp over it (B-LTA). On a dynamic (XFA) form, run_form_scripts: true runs the field's own signing scripts: preSign just before signing, so what it changes is signed too (form_scripts.changed lists each field it changed, with the values before and after), and postSign after, left unsaved. Without it they don't run, and form_scripts.skipped says the field has them.")
             .cmd("sign.digital")
             .with(schema(
                 json!({
@@ -1077,8 +1077,36 @@ pub fn tools() -> Vec<ToolDef> {
                     },
                     "out": { "type": "string", "description": "Where to save the signed document." },
                     "run_form_scripts": { "type": "boolean", "description": "Run a dynamic form's preSign and postSign scripts for the field (default false)." },
+                    "timestamp_url": { "type": "string", "description": "An RFC 3161 time-stamp authority (http:// or https://), e.g. http://timestamp.digicert.com: the signature gets a timestamp (PAdES B-T)." },
+                    "timeout": { "type": "integer", "minimum": 1, "maximum": 600, "description": "Seconds the time-stamp authority may take (default 30)." },
                 }),
                 &["doc", "id", "out"],
+            )),
+        t("sign_timestamp", "Add a document timestamp", "Append a document timestamp (RFC 3161, /ETSI.RFC3161) from the time-stamp authority at `url` (http:// or https://, POSTed as application/timestamp-query) and save to `out`. It proves the file, its signatures and any validation data existed unchanged at that time: after sign_add_ltv this makes PAdES B-LTA, and repeating it before the last timestamp's certificate expires keeps the archive valid. Works on an unsigned file too. Returns the timestamp as sign_list shows it.")
+            .cmd("sign.digital")
+            .with(schema(
+                json!({
+                    "doc": doc(),
+                    "url": { "type": "string", "description": "The time-stamp authority, e.g. http://timestamp.digicert.com." },
+                    "out": { "type": "string", "description": "Where to save the timestamped document." },
+                    "timeout": { "type": "integer", "minimum": 1, "maximum": 600, "description": "Seconds the authority may take (default 30)." },
+                }),
+                &["doc", "url", "out"],
+            )),
+        t("sign_add_ltv", "Add long-term validation data", "Add the data that keeps signatures verifiable after their certificates expire or are revoked (PAdES B-LT; Acrobat: Add Verification Information) and save to `out`: a /DSS with each signature's certificate chain, plus `certs` (more certificates, e.g. the issuers a chain lacks: .cer/.crt/.pem/.der or .p7b), `ocsps` (DER OCSP response files) and `crls` (DER CRL files). With fetch: true, each certificate that isn't a root also gets its OCSP response from the responder its certificate names, else its CRL from its http distribution point; `fetched` reports each, with the status it gives. `field` limits it to one signature. Follow with sign_timestamp for B-LTA.")
+            .cmd("sign.digital")
+            .with(schema(
+                json!({
+                    "doc": doc(),
+                    "out": { "type": "string", "description": "Where to save the document." },
+                    "field": { "type": "string", "description": "Only this signed field's signature (default: every signature)." },
+                    "certs": { "type": "array", "items": { "type": "string" }, "description": "Certificate files to add." },
+                    "ocsps": { "type": "array", "items": { "type": "string" }, "description": "DER OCSP response files to add." },
+                    "crls": { "type": "array", "items": { "type": "string" }, "description": "DER CRL files to add." },
+                    "fetch": { "type": "boolean", "description": "Fetch OCSP responses (else CRLs) for the certificates over the network (default false)." },
+                    "timeout": { "type": "integer", "minimum": 1, "maximum": 600, "description": "Seconds each fetch may take (default 30)." },
+                }),
+                &["doc", "out"],
             )),
         t("sign_trust", "Trust certificates", "Add certificates (.cer/.crt/.pem/.der, a .p7b/.p7c bundle, or the certificates in a .p12 with `password`) to the trusted certificates used to validate signatures, or clear the list (clear: true). Every open document is revalidated. Returns the trusted list.").with(schema(
             json!({ "paths": { "type": "array", "items": { "type": "string" } }, "password": { "type": "string" }, "clear": { "type": "boolean" } }),

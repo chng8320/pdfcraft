@@ -905,6 +905,8 @@ impl Automation {
             "accessibility_move_tag" => self.accessibility_move_tag(&a)?,
             "sign_id_create" => self.sign_id_create(&a)?,
             "sign_document" => self.sign_document(&a)?,
+            "sign_timestamp" => self.sign_timestamp(&a)?,
+            "sign_add_ltv" => self.sign_add_ltv(&a)?,
             "sign_keychain_ids" => {
                 #[cfg(target_os = "macos")]
                 let ids: Vec<Value> = pdfcraft_engine::sign::keychain::identities(None)
